@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
 from slack_sdk.signature import SignatureVerifier
 import requests
 from requests.auth import HTTPBasicAuth
@@ -8,7 +9,6 @@ import os
 app = Flask(__name__)
 
 # 🔐 Slack credentials
-
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
 slack_client = WebClient(token=SLACK_BOT_TOKEN)
@@ -17,7 +17,7 @@ verifier = SignatureVerifier(SLACK_SIGNING_SECRET)
 # 🔐 JIRA credentials
 JIRA_EMAIL = "pganesan@ashleyfurniture.com"
 JIRA_API_TOKEN = os.environ.get("JIRA_API_TOKEN")
-JIRA_BASE_URL = "https://ashley-furniture-team.atlassian.net/rest/api/3/myself"
+JIRA_BASE_URL = "https://ashley-furniture-team.atlassian.net"
 BOARD_ID = 1197  # Replace with your actual board ID
 auth = HTTPBasicAuth(JIRA_EMAIL, JIRA_API_TOKEN)
 headers = {"Accept": "application/json"}
@@ -44,14 +44,31 @@ def get_user_issues(account_id, sprint_id):
 # 🚪 Slack event endpoint
 @app.route("/slack/events", methods=["POST"])
 def slack_events():
-    # ✅ Slack URL verification
     data = request.get_json()
+
+    # ✅ Slack URL verification
     if data.get("type") == "url_verification":
         return jsonify({"challenge": data["challenge"]})
 
     # 🔒 Verify request signature
     if not verifier.is_valid_request(request.get_data(), request.headers):
         return "Invalid request", 403
+
+    # 💬 Handle app mentions (e.g., @JIRA Helper Bot hello)
+    if "event" in data:
+        event = data["event"]
+        if event.get("type") == "app_mention":
+            user = event.get("user")
+            channel = event.get("channel")
+            text = event.get("text", "")
+            try:
+                slack_client.chat_postMessage(
+                    channel=channel,
+                    text=f"Hi <@{user}>! 👋 You said: `{text}`. How can I help you with JIRA?"
+                )
+            except SlackApiError as e:
+                print(f"Error sending message: {e.response['error']}")
+            return "", 200
 
     # 🧠 Handle slash command
     form_data = request.form
